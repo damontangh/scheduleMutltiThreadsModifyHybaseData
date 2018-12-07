@@ -37,23 +37,39 @@ public class StartThredsJob {
 
     @Autowired
     RestTemplate restTemplate;
-    public static final int forTime = 4;
+    public static final int forTime = 2;
     /**
      * 给app,szb,weixin,weibo添加hybase_id，
      * 2017.12.06只有weibo还未修复完成，只需要一个主线程就行
      */
     private static Executor executor = Executors.newFixedThreadPool(forTime);
     public void startWithThread(){
+        /**
+         * 任务的起始点是这里
+         * 先说一下任务目的和思路：
+         * 修复N张表中的数据。首先可以肯定这是一个定时任务。
+         * 然后通过N条线程去获取数据，每条线程都获取了很多数据，
+         * 接下去的解释只针对单条线程的数据 -> 通过多线程去处理这些数据，怎么确定需要多少线程呢？
+         * -> 根据数据量和一个固定的基数，就可以算出需要M条线程去处理这些数据
+         * -> 每条线程处理完数据，然后更新数据。因此处理和更新是同一条线程处理的。
+         */
+
+        /**
+         * 再说代码的实现
+         * CountDownLatch类有阻塞的作用,需要两个实例，一个startLatch，一个endLatch
+         * 使用线程池管理线程，endLatch构造器传参int，
+         * startLatch是总阀门，它一声令下，任务才可以执行，可以看MyThread类中的注释，
+         * 而endLatch，它是控制收尾工作的，只有所有线程都运行结束，那么主线程才会接着向下执行
+         */
         CountDownLatch startLatch = new CountDownLatch(1);
         final CountDownLatch endLatch = new CountDownLatch(forTime);
-
         for (i = 0; i < forTime; i++) {
             Thread thread = new Thread(new MyThread(i,startLatch,endLatch));
-            executor.execute(thread);//也OK
+            executor.execute(thread);
         }
         startLatch.countDown();//发出信号，可以执行上面N个线程的任务
-        //此时在执行N个线程任务，下面的await等待所有任务执行完毕
         try {
+            //此时在执行N个线程任务，下面的await等待所有任务执行完毕，主线程才会往下执行，输出日志log.info("Job done");
             endLatch.await();
            /* Thread thread = new Thread(new Runnable() {
                 @Override
@@ -85,20 +101,9 @@ public class StartThredsJob {
         @Override
         public void run() {
             try {
-
-                switch (i){
-                    case 0:
-                    case 1:
-                    case 2:
-                    case 3:
-                        startLatch.await();
-                        restTemplate.postForObject("http://127.0.0.1:6081/zyzx/fetch/rescentData?channelType=wx&pageNum=1&ids=linankepu&startTime=2015/02/10 14:30:47&endTime=2017/02/10 14:30:47",null,String.class);
-                        restTemplate.postForObject("http://127.0.0.1:6081/zyzx/fetch/weixinInfoById?weixinId=cicaf2012",null,String.class);
-                        restTemplate.postForObject("http://127.0.0.1:6081/zyzx/search/rescentData?zbSourceSite=今日头条&pageNum=1&pageSize=10&channelType=wz&returnCols=DOCCHANNEL;BC;DOCPUBTIME;TXS;BM;IR_ABSTRACT;ZB_KEYWORDS5_CHAR",null,String.class);
-                        restTemplate.postForObject("http://127.0.0.1:6081/zyzx/search/detailData?guid=973373589095272448&mlfDocid=6784353&dbName=mlf_product_formal&returnCols=DOCCHANNEL;BC;DOCPUBTIME;TXS;BM;IR_ABSTRACT;ZB_KEYWORDS5_CHAR",null,String.class);
-                }
-               /* if (i == 0){
+                if (i == 0){
                     try {
+                        //startLatch是控制总阀，weiboMultiProcess任务现在待命，但是不能执行
                         startLatch.await();
                         weiboMultiProcess.MultiProcess();
                     } catch (Exception e) {
@@ -111,10 +116,11 @@ public class StartThredsJob {
                     } catch (InterruptedException e) {
                         log.error(String.format("app thread error,msg:[%s]",e));
                     }
-                }*/
+                }
             }catch (Exception e){
                 log.error(String.format("thread error,msg:[%s]",e));
             } finally {
+                //注意这里一定要写在finally中
                 latch.countDown();
             }
 
