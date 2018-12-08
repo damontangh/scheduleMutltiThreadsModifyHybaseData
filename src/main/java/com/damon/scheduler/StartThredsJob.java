@@ -38,11 +38,9 @@ public class StartThredsJob {
     @Autowired
     RestTemplate restTemplate;
     public static final int forTime = 2;
-    /**
-     * 给app,szb,weixin,weibo添加hybase_id，
-     * 2017.12.06只有weibo还未修复完成，只需要一个主线程就行
-     */
+
     private static Executor executor = Executors.newFixedThreadPool(forTime);
+
     public void startWithThread(){
         /**
          * 任务的起始点是这里
@@ -52,6 +50,15 @@ public class StartThredsJob {
          * 接下去的解释只针对单条线程的数据 -> 通过多线程去处理这些数据，怎么确定需要多少线程呢？
          * -> 根据数据量和一个固定的基数，就可以算出需要M条线程去处理这些数据
          * -> 每条线程处理完数据，然后更新数据。因此处理和更新是同一条线程处理的。
+         *
+         * English version:
+         * The entrance of task is here,so let me tell you the thought of mine:
+         * The mission is to modify and update data for multiple tables,so it must be schedule task.
+         * This class will generate X threads,each is will fetch lots of data from each table,
+         * the following explanation is based on one thread -> after data fetched,the data should be processed
+         * by multiple threads,but how to calculate the amount of thread?
+         * -> We need 2 figures,one is the amount of data,the other is a constant number,then we will
+         * know we need X threads to process the data,and also update data.
          */
 
         /**
@@ -60,6 +67,15 @@ public class StartThredsJob {
          * 使用线程池管理线程，endLatch构造器传参int，
          * startLatch是总阀门，它一声令下，任务才可以执行，可以看MyThread类中的注释，
          * 而endLatch，它是控制收尾工作的，只有所有线程都运行结束，那么主线程才会接着向下执行
+         *
+         * English version:
+         * Some explanation about code:
+         * The function of CountDownLatch is blocking thread,and we need two of them, a startLatch,an endLatch.
+         * The therad pool will manage threads,and a int should be passed into constructor of CountDownLatch.
+         * startLatch is the main valve,after signal sent by it,those threads will starting running,please read
+         * the commentary of inner class MyThread.
+         * While endLatch is blocking the main thread,after all the threads have done their jobs,the main thread
+         * then will keep running.
          */
         CountDownLatch startLatch = new CountDownLatch(1);
         final CountDownLatch endLatch = new CountDownLatch(forTime);
@@ -67,9 +83,11 @@ public class StartThredsJob {
             Thread thread = new Thread(new MyThread(i,startLatch,endLatch));
             executor.execute(thread);
         }
-        startLatch.countDown();//发出信号，可以执行上面N个线程的任务
+        startLatch.countDown();//发出信号，可以执行上面N个线程的任务 send signal,threads in the for loop can run.
         try {
             //此时在执行N个线程任务，下面的await等待所有任务执行完毕，主线程才会往下执行，输出日志log.info("Job done");
+            //those threads in the for loop are runnning,but the main thread cannot keep running,
+            // after sub threads have done their jobs,the main thread will run.
             endLatch.await();
            /* Thread thread = new Thread(new Runnable() {
                 @Override
@@ -104,6 +122,7 @@ public class StartThredsJob {
                 if (i == 0){
                     try {
                         //startLatch是控制总阀，weiboMultiProcess任务现在待命，但是不能执行
+                        //startLatch is main valve,weiboMultiProcess is ready,but it cannot be executed
                         startLatch.await();
                         weiboMultiProcess.MultiProcess();
                     } catch (Exception e) {
@@ -121,6 +140,7 @@ public class StartThredsJob {
                 log.error(String.format("thread error,msg:[%s]",e));
             } finally {
                 //注意这里一定要写在finally中
+                //it must be written here
                 latch.countDown();
             }
 
